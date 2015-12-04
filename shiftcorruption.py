@@ -218,7 +218,7 @@ def page_validator(lsn_min=3, lsn_max=2**48, xid_min=0, xid_max=2**32, special_m
                 
 
 if __name__ == '__main__':
-    parser = OptionParser(usage="usage: $prog [options] broken_file",
+    parser = OptionParser(usage="usage: %prog [options] broken_file",
         description="""Small utility to fix corruption where garbage bytes
         have been randomly inserted into relation segments, shifting the rest
         of the file by an offset. Currently only works sanely on heap files.
