@@ -61,12 +61,12 @@ def read_block(path, index):
 
 def replace_with_backup(backup, index, page):
     if backup is None:
-        return None
+        return None, None
     backup_data = read_block(backup, index)
     backup_page = parse_page(backup_data)
     if backup_page.lsn == page.lsn:
-        return backup_data
-    return None
+        return backup_data, backup_page.lsn
+    return None, backup_page.lsn
 
 def outLSN(v):
     return "%x/%08x" % (v>>32,v & 0xFFFFFFFF)
@@ -114,6 +114,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
     valid = 0
     zero = 0
     unfixable = 0
+    last_was_shifted_back = False
 
     for index, prev_data, data in blocks_with_prev(input_path):
         total += 1
@@ -142,20 +143,37 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         if first_invalid == 0:
             return "First page is broken, skipping file"
 
-        broken_page = parse_page(prev_data)
-        
-        replace_data = replace_with_backup(backup, broken_index, broken_page)        
-        if replace_data is not None:
+        broken_page = parse_page(prev_data[offset:])
+
+        if offset == 0 and last_was_shifted_back:
+            # Current block is broken, but last block was a zero offset page in
+            # the middle of shifted data. Assume that a newer block was splatted
+            # across corrupted section
             fixed += 1
-            log.info("Broken page %d can be restored from backup" % broken_index)
+            replace_data = prev_data
+            log.info("Previous page with LSN %d is considered ok", broken_page.lsn)
         else:
-            unfixable += 1
+            # Previous page probably contains inserted garbage, try to look up replacement
+            # from backup
+            replace_data, backup_lsn = replace_with_backup(backup, broken_index, broken_page)
+            if replace_data is not None:
+                fixed += 1
+                log.info("Broken page %d can be restored from backup, LSN: %d", broken_index, backup_lsn)
+            else:
+                unfixable += 1
+                if backup:
+                    log.info("Broken page %d is different LSN in backup. %d %d " % (broken_index, broken_page.lsn, backup_lsn))
             
-        for new_offset in xrange(offset+1,BLOCK-24):
+        for new_offset in xrange(0,BLOCK-24):
             if validate_page(parse_page(data[new_offset:])) is None:
                 break
         else:
-            return "Broken page %d in %s can not be fixed by shifting"
+            return "Broken page %d in %s can not be fixed by shifting" % (broken_index, input_path)
+
+        if new_offset == 0:
+            last_was_shifted_back = True
+        else:
+            last_was_shifted_back = False
         offset = new_offset
         log.info("Found a fix with offset %d" % offset)
         
@@ -174,14 +192,16 @@ def fix_page_corruption(input_path, validate_page, backup, output):
     final_index = index
     if offset != 0:
         final_page = parse_page(read_block(input_path, final_index)[offset:])
-        replace_data = replace_with_backup(backup, final_index, final_page)
+        replace_data, backup_lsn = replace_with_backup(backup, final_index, final_page)
         if replace_data is not None:
-            log.info("Final page can be restored from backup")
+            log.info("Final page can be restored from backup, LSN: %d", backup_lsn)
             stats.add(parse_page(replace_data))
             fixed += 1
             if out_fd is not None:
                 out_fd.write(replace_data)
         else:
+            if backup:
+                log.info("Final page %d is different LSN in backup. %d %d " % (final_index, final_page.lsn, backup_lsn))
             unfixable += 1
             if out_fd is not None:
                 out_fd.write(ZERO_BLOCK)
