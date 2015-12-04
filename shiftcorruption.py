@@ -160,9 +160,21 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                 fixed += 1
                 log.info("Broken page %d can be restored from backup, LSN: %d", broken_index, backup_lsn)
             else:
-                unfixable += 1
                 if backup:
                     log.info("Broken page %d is different LSN in backup. %d %d " % (broken_index, broken_page.lsn, backup_lsn))
+                    # Try to match up last row in backup block with newer version.
+                    # TODO: use line pointers to figure out last row position, match xmin.
+                    # reduces false negatives here
+                    backup_block = read_block(backup, broken_index)
+                    overlap = 256
+                    if backup_block[-overlap-offset:-offset] == prev_data[-overlap:]:
+                        log.info("Backup block matched with %d overlap, picking final %d bytes from backup block" % (overlap, offset))
+                        replace_data = prev_data[offset:] + backup_block[-offset:]
+                        fixed += 1
+                    else:
+                        unfixable += 1
+                else:
+                    unfixable += 1
             
         for new_offset in xrange(0,BLOCK-24):
             if validate_page(parse_page(data[new_offset:])) is None:
