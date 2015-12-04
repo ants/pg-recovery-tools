@@ -3,6 +3,7 @@ from collections import namedtuple
 import logging
 from optparse import OptionParser
 import os
+import re
 import struct
 import sys
 
@@ -103,7 +104,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
     log.info("Processing %s with %d bytes of data (%d pages)" % (input_path, size, size/BLOCK))
     if size % BLOCK != 0:
         err = "Invalid table file size %d. %d extra bytes" % (size, size % BLOCK)
-        return err
+        return err, []
     out_fd = None
     
     stats = PageStats()
@@ -123,6 +124,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             if out_fd is not None:
                 out_fd.write(prev_data[offset:] + data[:offset])
             zero += 1
+            valid += 1
             continue
         page = parse_page(data[offset:])
         err = validate_page(page)
@@ -141,7 +143,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         
         log.info("Found broken page header in %s at %d: %s" % (input_path, first_invalid, err))
         if first_invalid == 0:
-            return "First page is broken, skipping file"
+            return "First page is broken, skipping file", []
 
         broken_page = parse_page(prev_data[offset:])
 
@@ -173,7 +175,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             if validate_page(parse_page(data[new_offset:])) is None:
                 break
         else:
-            return "Broken page %d in %s can not be fixed by shifting" % (broken_index, input_path)
+            return "Broken page %d in %s can not be fixed by shifting" % (broken_index, input_path), []
 
         if new_offset == 0:
             last_was_shifted_back = True
@@ -217,11 +219,11 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             if out_fd is not None:
                 out_fd.write(ZERO_BLOCK)
     stats.output()
-    if offset == 0:
+    if valid == total:
         log.info("File %s is fine" % input_path) 
     else:
         log.info("Found %d pages in %s, %d empty. Fixed %d pages, %d unfixable, %d valid" % (total, input_path, zero, fixed, unfixable, valid))
-    return None
+    return None, [total, valid, fixed, unfixable]
 
 def page_validator(lsn_min=3, lsn_max=2**48, xid_min=0, xid_max=2**32, special_min=8192):
     def validate_page(page):
@@ -251,7 +253,65 @@ def page_validator(lsn_min=3, lsn_max=2**48, xid_min=0, xid_max=2**32, special_m
         
         return None
     return validate_page
+
+
+
+def find_data_files(data_dir, validate_page, options):
+    if not os.path.exists(os.path.join(data_dir, 'pg_filenode.map')):
+        log.error("%s does not look like a database directory" % data_dir)
+        return
+    fsm_file_re = re.compile("([0-9]+)_fsm$")
+    
+    num_files = 0
+    num_ok = 0
+    num_fixable = 0
+    num_fixed = 0
+    num_with_broken = 0
+    num_fully_broken = 0
+
+    for filename in os.listdir(data_dir):
+        match = fsm_file_re.match(filename)
+        if match is not None:
+            filenode = match.group(1)
+            if int(filenode) < 16384:
+                log.info("Skipping catalog table %s", filenode)
+                continue
+            datafile = os.path.join(data_dir, filenode)
+            seg = 0
+            while os.path.exists(datafile):
+                num_files += 1
+                if options.fix_in_place:
+                    output = datafile+'.fixed'
+                else:
+                    output = None
+                if options.backup:
+                    backup = os.path.join(options.backup, os.path.basename(datafile))
+                    if not os.path.exists(backup):
+                        log.info("Backup for %s does not exist")
+                        backup = None
+                else:
+                    backup = None
+                err, stats = fix_page_corruption(datafile, validate_page, backup, output)
+                if err != None:
+                    num_fully_broken += 1
+                    log.error("Error processing %s: %s", datafile, err)
+                    continue
                 
+                total, valid, fixed, unfixable = stats
+                if total == valid:
+                    num_ok += 1
+                if fixed > 0:
+                    num_fixable += 1
+                if unfixable > 0:
+                    num_with_broken += 1
+                if output and os.path.exists(output):
+                    backup_file = datafile+'.backup'
+                    os.rename(datafile, backup_file)
+                    os.rename(output, datafile)
+                    num_fixed += 1
+                seg += 1
+                datafile = "%s.%d" % (os.path.join(data_dir, filenode), seg)
+    log.info("Finished procesing %s. %d files processed. %d OK, %d fixable, %d fixed, %d contain missing pages, %d could not be processed", data_dir, num_files, num_ok, num_fixable, num_fixed, num_with_broken, num_fully_broken)
 
 if __name__ == '__main__':
     parser = OptionParser(usage="usage: %prog [options] broken_file",
@@ -286,6 +346,11 @@ if __name__ == '__main__':
     parser.add_option("--specialmin", dest="specialmin", type="int",
                   help="minimum special spave", metavar="LSN",
                   default=BLOCK)
+    parser.add_option("--dir", action="store_true", dest="dir_mode",
+                  help="Consider input file as a data directory and automatically look up table files.")
+    parser.add_option("--fix", action="store_true", dest="fix_in_place",
+                  help="Fix files and replace them in place. Copy is stored with .backup suffix.")
+    
     (options, args) = parser.parse_args()
     if len(args) < 1:
         print "Usage: %s filenode" % (sys.argv[0])
@@ -298,7 +363,10 @@ if __name__ == '__main__':
         xid_max=options.xidmax,
         special_min=options.specialmin,
     )
-    err = fix_page_corruption(args[0], validate_page, options.backup, options.output)
-    if err != None:
-        log.error(err)
-        sys.exit(2)
+    if options.dir_mode:
+        find_data_files(args[0], validate_page, options)
+    else:
+        err, _ = fix_page_corruption(args[0], validate_page, options.backup, options.output)
+        if err != None:
+            log.error(err)
+            sys.exit(2)
