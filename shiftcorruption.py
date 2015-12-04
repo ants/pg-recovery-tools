@@ -295,20 +295,19 @@ def find_data_files(data_dir, validate_page, options):
                 if err != None:
                     num_fully_broken += 1
                     log.error("Error processing %s: %s", datafile, err)
-                    continue
-                
-                total, valid, fixed, unfixable = stats
-                if total == valid:
-                    num_ok += 1
-                if fixed > 0:
-                    num_fixable += 1
-                if unfixable > 0:
-                    num_with_broken += 1
-                if output and os.path.exists(output):
-                    backup_file = datafile+'.backup'
-                    os.rename(datafile, backup_file)
-                    os.rename(output, datafile)
-                    num_fixed += 1
+                else:
+                    total, valid, fixed, unfixable = stats
+                    if total == valid:
+                        num_ok += 1
+                    if fixed > 0:
+                        num_fixable += 1
+                    if unfixable > 0:
+                        num_with_broken += 1
+                    if output and os.path.exists(output):
+                        backup_file = datafile+'.backup'
+                        os.rename(datafile, backup_file)
+                        os.rename(output, datafile)
+                        num_fixed += 1
                 seg += 1
                 datafile = "%s.%d" % (os.path.join(data_dir, filenode), seg)
     log.info("Finished procesing %s. %d files processed. %d OK, %d fixable, %d fixed, %d contain missing pages, %d could not be processed", data_dir, num_files, num_ok, num_fixable, num_fixed, num_with_broken, num_fully_broken)
