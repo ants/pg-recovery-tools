@@ -11,7 +11,6 @@ BLOCK = 8192
 Page = namedtuple('Page', ['lsn', 'checksum', 'flags', 'pd_lower', 'pd_upper', 
     'pd_special', 'pd_pagesize_version', 'pd_prune_xid'])
 
-log = logging.getLogger('shiftcorruption')
 root = logging.getLogger()
 fmt = logging.Formatter('[%(asctime)-15s] %(message)s')
 fh = logging.FileHandler("shiftcorruption.log")
@@ -20,7 +19,10 @@ root.addHandler(fh)
 sh = logging.StreamHandler()
 sh.setFormatter(fmt)
 root.addHandler(sh)
-root.setLevel("INFO")
+root.setLevel(logging.INFO)
+
+log = logging.getLogger('shiftcorruption')
+log.setLevel(logging.INFO)
 
 def parse_page(data):
     lsn_a, lsn_b, checksum, flags, pd_lower, pd_upper, \
@@ -95,7 +97,7 @@ class PageStats(object):
         else:
             log.info("XIDs: %r", self.xids)
             log.info("XIDs (hex): [%s]", ", ".join("%08X"%xid for xid in self.xids))
-        
+
 def fix_page_corruption(input_path, validate_page, backup, output):
     size = os.path.getsize(input_path)
     log.info("Processing %s with %d bytes of data (%d pages)" % (input_path, size, size/BLOCK))
@@ -135,9 +137,12 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         
         first_invalid = index
         broken_index = index-1
-        broken_page = parse_page(prev_data)
         
         log.info("Found broken page header in %s at %d: %s" % (input_path, first_invalid, err))
+        if first_invalid == 0:
+            return "First page is broken, skipping file"
+
+        broken_page = parse_page(prev_data)
         
         replace_data = replace_with_backup(backup, broken_index, broken_page)        
         if replace_data is not None:
