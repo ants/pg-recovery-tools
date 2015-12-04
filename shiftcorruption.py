@@ -175,7 +175,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             if validate_page(parse_page(data[new_offset:])) is None:
                 break
         else:
-            return "Broken page %d in %s can not be fixed by shifting" % (broken_index, input_path), []
+            return "Broken page %d in %s can not be fixed by shifting" % (first_invalid, input_path), []
 
         if new_offset == 0:
             last_was_shifted_back = True
