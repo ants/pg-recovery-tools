@@ -149,7 +149,6 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             # Current block is broken, but last block was a zero offset page in
             # the middle of shifted data. Assume that a newer block was splatted
             # across corrupted section
-            fixed += 1
             replace_data = prev_data
             log.info("Previous page with LSN %d is considered ok", broken_page.lsn)
         else:
@@ -157,7 +156,6 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             # from backup
             replace_data, backup_lsn = replace_with_backup(backup, broken_index, broken_page)
             if replace_data is not None:
-                fixed += 1
                 log.info("Broken page %d can be restored from backup, LSN: %d", broken_index, backup_lsn)
             else:
                 if backup:
@@ -170,11 +168,6 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                     if backup_block[-overlap-offset:-offset] == prev_data[-overlap:]:
                         log.info("Backup block matched with %d overlap, picking final %d bytes from backup block" % (overlap, offset))
                         replace_data = prev_data[offset:] + backup_block[-offset:]
-                        fixed += 1
-                    else:
-                        unfixable += 1
-                else:
-                    unfixable += 1
             
         for new_offset in xrange(0,BLOCK-24):
             if validate_page(parse_page(data[new_offset:])) is None:
@@ -196,11 +189,17 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                 for l, copy_data in blocks(input_path, 0, broken_index):
                     out_fd.write(copy_data)
                 log.info("Copied %d pages directly" % l)
-            if replace_data is not None:
-                stats.add(parse_page(replace_data))
+
+        if replace_data is not None:
+            fixed += 1
+            stats.add(parse_page(replace_data))
+            if out_fd is not None:
                 out_fd.write(replace_data)
-            else:
+        else:
+            unfixable += 1
+            if out_fd is not None:
                 out_fd.write(ZERO_BLOCK)
+
     final_index = index
     if offset != 0:
         final_page = parse_page(read_block(input_path, final_index)[offset:])
