@@ -107,6 +107,9 @@ def fix_page_corruption(input_path, validate_page, backup, output):
     if size % BLOCK != 0:
         err = "Invalid table file size %d. %d extra bytes" % (size, size % BLOCK)
         return err, []
+    if size == 0:
+        return None, [0,0,0,0]
+    
     out_fd = None
     
     stats = PageStats()
