@@ -64,6 +64,8 @@ def replace_with_backup(backup, index, page):
     if backup is None:
         return None, None
     backup_data = read_block(backup, index)
+    if len(backup_data) == 0:
+        return None, None
     backup_page = parse_page(backup_data)
     if backup_page.lsn == page.lsn:
         return backup_data, backup_page.lsn
