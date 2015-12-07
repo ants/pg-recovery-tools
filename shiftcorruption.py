@@ -195,6 +195,9 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             # across corrupted section
             replace_data = prev_data
             log.info("Previous page %d with LSN %d is considered ok", broken_index, broken_page.lsn)
+        elif last_header_valid and new_offset == 0 and offset < 0:
+            replace_data = shiftback_buf + prev_data[:offset]
+            log.info("Overwrite splatter page, considering %d valid", broken_index)
         elif last_header_valid and backup: # TODO: try overlap matching without a valid header
             # Previous page probably contains inserted garbage, try to look up replacement
             # from backup
