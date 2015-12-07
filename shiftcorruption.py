@@ -115,27 +115,51 @@ def fix_page_corruption(input_path, validate_page, backup, output):
     valid = 0
     zero = 0
     unfixable = 0
-    last_was_shifted_back = False
+    last_was_overwrite = False
+    last_header_valid = False
+    shiftback_buf = None
+    last_shift = None
 
     for index, prev_data, data in blocks_with_prev(input_path):
         total += 1
         # Find first broken page
-        if is_zero_page(data[offset:]):
+        
+        if offset >= 0:
+            candidate_page = data[offset:]
+        else:
+            candidate_page = prev_data[offset:] + data[:offset]
+        
+        if is_zero_page(candidate_page):
+            last_header_valid = False
             if out_fd is not None:
-                out_fd.write(prev_data[offset:] + data[:offset])
+                if offset >= 0:
+                    merged_page = prev_data[offset:] + data[:offset]
+                else:
+                    merged_page = shiftback_buf + prev_data[:offset]
+                out_fd.write(merged_page)
+            
+            if offset < 0:
+                shiftback_buf = prev_data[offset:]
             zero += 1
             valid += 1
             continue
-        page = parse_page(data[offset:])
+        page = parse_page(candidate_page)
         err = validate_page(page)
         if err is None:
+            last_header_valid = True
             stats.add(page)
             if offset == 0:
                 valid += 1
             else:
                 if out_fd is not None:
-                    out_fd.write(prev_data[offset:] + data[:offset])
+                    if offset >= 0:
+                        merged_page = prev_data[offset:] + data[:offset]
+                    else:
+                        merged_page = shiftback_buf + prev_data[:offset]
+                    out_fd.write(merged_page)
                 fixed += 1
+                if offset < 0:
+                    shiftback_buf = prev_data[offset:]
             continue
         
         first_invalid = index
@@ -145,15 +169,31 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         if first_invalid == 0:
             return "First page is broken, skipping file", []
 
-        broken_page = parse_page(prev_data[offset:])
+        if offset >= 0:
+            broken_page = parse_page(prev_data[offset:])
+        else:
+            broken_page = parse_page(shiftback_buf + prev_data[:offset])
+            
+        for new_offset in xrange(0,BLOCK/2):
+            if validate_page(parse_page(data[new_offset:])) is None:
+                break
+        else:
+            for new_offset in xrange(-1, -BLOCK/2 - 1, - 1):
+                if validate_page(parse_page(prev_data[new_offset:] + data[:new_offset])) is None:
+                    break
+            else:
+                log.error("Broken page %d in %s can not be fixed by shifting." % (first_invalid, input_path))
+                new_offset = None
+                last_header_valid = False
 
-        if offset == 0 and last_was_shifted_back:
+        replace_data = None
+        if offset == 0 and last_was_overwrite:
             # Current block is broken, but last block was a zero offset page in
             # the middle of shifted data. Assume that a newer block was splatted
             # across corrupted section
             replace_data = prev_data
-            log.info("Previous page with LSN %d is considered ok", broken_page.lsn)
-        else:
+            log.info("Previous page %d with LSN %d is considered ok", broken_index, broken_page.lsn)
+        elif last_header_valid and backup: # TODO: try overlap matching without a valid header
             # Previous page probably contains inserted garbage, try to look up replacement
             # from backup
             replace_data, backup_lsn = replace_with_backup(backup, broken_index, broken_page)
@@ -170,19 +210,24 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                     if backup_block[-overlap-offset:-offset] == prev_data[-overlap:]:
                         log.info("Backup block matched with %d overlap, picking final %d bytes from backup block" % (overlap, offset))
                         replace_data = prev_data[offset:] + backup_block[-offset:]
-            
-        for new_offset in xrange(0,BLOCK-24):
-            if validate_page(parse_page(data[new_offset:])) is None:
-                break
+        elif offset == 0 and not last_header_valid and last_shift is not None and last_shift < 0 and backup:
+            backup_block = read_block(backup, broken_index)
+            overlap = 1024
+            log.info("Trying to match backup block for %d", broken_index)
+            if prev_data[0:overlap] == backup_block[-last_shift:-last_shift+overlap]:
+                log.info("Backup block overlap %d bytes at block %d. Using %d first bytes from backup block", overlap, broken_index, -last_shift)
+                replace_data = backup_block
         else:
-            return "Broken page %d in %s can not be fixed by shifting" % (first_invalid, input_path), []
+            log.error("Could not fix broken block %d, replacing with zeroes and continuing.", broken_index)
 
-        if new_offset == 0:
-            last_was_shifted_back = True
-        else:
-            last_was_shifted_back = False
-        offset = new_offset
-        log.info("Found a fix with offset %d" % offset)
+        if new_offset is not None:
+            offset = new_offset
+            log.info("Found a fix with offset %d" % offset)
+        if new_offset < 0:
+            shiftback_buf = prev_data[new_offset:]
+        if new_offset is not None and new_offset != 0:
+            last_shift = new_offset
+        last_was_overwrite = new_offset == 0
         
         if output:
             if out_fd is None:
@@ -203,7 +248,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                 out_fd.write(ZERO_BLOCK)
 
     final_index = index
-    if offset != 0:
+    if offset > 0:
         final_page = parse_page(read_block(input_path, final_index)[offset:])
         replace_data, backup_lsn = replace_with_backup(backup, final_index, final_page)
         if replace_data is not None:
@@ -218,6 +263,17 @@ def fix_page_corruption(input_path, validate_page, backup, output):
             unfixable += 1
             if out_fd is not None:
                 out_fd.write(ZERO_BLOCK)
+    elif offset < 0:
+        final_data = shiftback_buf + read_block(input_path, final_index)[:offset]
+        if validate_page(parse_page(final_data)) is not None:
+            log.info("Error in final page with shifted back data")
+            final_data = ZERO_BLOCK
+            unfixable += 1
+        else:
+            fixed += 1
+        if out_fd is not None:
+            out_fd.write(final_data)
+        
     stats.output()
     if valid == total:
         log.info("File %s is fine" % input_path) 
@@ -287,7 +343,7 @@ def find_data_files(data_dir, validate_page, options):
                 if options.backup:
                     backup = os.path.join(options.backup, os.path.basename(datafile))
                     if not os.path.exists(backup):
-                        log.info("Backup for %s does not exist")
+                        log.info("Backup for %s does not exist", datafile)
                         backup = None
                 else:
                     backup = None
