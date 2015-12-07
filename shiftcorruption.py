@@ -264,7 +264,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                 out_fd.write(replace_data)
         else:
             if backup:
-                log.info("Final page %d is different LSN in backup. %d %d " % (final_index, final_page.lsn, backup_lsn))
+                log.info("Final page %d is different LSN in backup. %d %s " % (final_index, final_page.lsn, backup_lsn))
             unfixable += 1
             if out_fd is not None:
                 out_fd.write(ZERO_BLOCK)
