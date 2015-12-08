@@ -153,15 +153,18 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         if err is None:
             last_header_valid = True
             stats.add(page)
+            if out_fd is not None:
+                if offset == 0:
+                    merged_page = prev_data
+                elif offset > 0:
+                    merged_page = prev_data[offset:] + data[:offset]
+                else:
+                    merged_page = shiftback_buf + prev_data[:offset]
+                out_fd.write(merged_page)
+
             if offset == 0:
                 valid += 1
             else:
-                if out_fd is not None:
-                    if offset >= 0:
-                        merged_page = prev_data[offset:] + data[:offset]
-                    else:
-                        merged_page = shiftback_buf + prev_data[:offset]
-                    out_fd.write(merged_page)
                 fixed += 1
                 if offset < 0:
                     shiftback_buf = prev_data[offset:]
