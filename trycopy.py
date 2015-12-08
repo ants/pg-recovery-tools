@@ -1,41 +1,86 @@
 from cStringIO import StringIO
+import logging
 import psycopg2
 import sys
 import time
+import csv
+from optparse import OptionParser
 
-default_page_range = 100
-max_linepointers_per_page = 300
+parser = OptionParser(usage="usage: %prog [options] connstr srctable outfile",
+    description="""Tries to copy out as much data as possible from a broken table.""")
+parser.add_option("-c", "--csv", dest="csv",
+                help="store broken ctids into csv FILE", metavar="FILE")
+parser.add_option("-l", "--log", dest="log",
+                help="store logs into FILE", metavar="FILE")
+parser.add_option("-p", "--lpmax", dest="lpmax", type="int", default=300,
+                help="maximum number of linepointers in a page")
+parser.add_option("-b", "--batch", dest="batch", type="int", default=100,
+                help="Starting batch size in pages")
+
+(options, args) = parser.parse_args()
 
 
-if len(sys.argv) < 4:
-    print "Usage trycopy.py connstr srctable outfile"
+default_page_range = options.batch
+max_linepointers_per_page = options.lpmax
+
+
+if len(args) != 3:
+    parser.print_usage()
     sys.exit(1)
 
+connstring = args[0]
+tablename = args[1]
+outfile = args[2]
 
-connstring = sys.argv[1]
-tablename = sys.argv[2]
-outfile = sys.argv[3]
 
-fd = open(outfile, "a")
+root = logging.getLogger()
+fmt = logging.Formatter('[%(asctime)-15s] %(message)s')
+if options.log:
+    fh = logging.FileHandler(options.log)
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+sh = logging.StreamHandler()
+sh.setFormatter(fmt)
+sh.setLevel(logging.WARN)
+root.addHandler(sh)
+root.setLevel(logging.INFO)
+
+log = logging.getLogger('trycopy')
+log.setLevel(logging.INFO)
+
+
+if options.csv:
+    csvfd = open(options.csv, "a")
+    csvwriter = csv.writer(csvfd)
+else:
+    csvwriter = None
+
+fd = open(outfile, "w")
 
 def new_connection():
     global conn, cur
     while True:
         try:
-            conn = psycopg2.connect(sys.argv[1])
+            log.info("Trying to get a new connection")
+            conn = psycopg2.connect(connstring)
             break
         except psycopg2.Error:
             time.sleep(1)
 
     cur = conn.cursor()
 
+class Stats(object):
+    def __init__(self):
+        self.success = 0
+        self.fail = 0
+    def __str__(self):
+        return "%s success, %s fail" % (self.success, self.fail)
 
 new_connection()
 cur.execute("SELECT pg_relation_size(%s::regclass)/8192 AS num_pages", (tablename,))
 total_pages, = cur.fetchone()
 
-
-
+log.warn("Processing relation %s", tablename)
 
 def copy_range(ctids):
     query = StringIO()
@@ -49,6 +94,7 @@ def copy_range(ctids):
             buf = StringIO()
             cur.copy_expert(query.getvalue(), buf)
             fd.write(buf.getvalue())
+            stats.success += cur.rowcount
             return
         except psycopg2.Error, e:
             if isinstance(e, psycopg2.InterfaceError):
@@ -60,24 +106,33 @@ def copy_range(ctids):
                     new_connection()
             if len(ctids) > 1:
                 batch_size = max(1,len(ctids)/10)
-                print "Error: %s, bisecting into batches of %d" % (e, batch_size)
+                log.info("Error: %s, bisecting into batches of %d" % (e, batch_size))
                 for start in xrange(0,len(ctids),batch_size):
                     copy_range(ctids[start:start+batch_size])
                 return
             else:
-                print "Failed row %s" % ctids[0]
+                stats.fail += 1
+                log.error("Failed row %s" % ctids[0])
+                if csvwriter is not None:
+                    page, lp = ctids[0][2:-2].split(",")
+                    row = "%0.3f" % time.time(), page, lp, str(e)
+                    csvwriter.writerow(row)
                 return
         finally:
             buf.close()
 
-print "Total pages: %d" % total_pages
+stats = Stats()
+log.warn( "Total pages: %d" % total_pages)
 last_complete = 0.
 for start in xrange(0, total_pages, default_page_range):
     if float(start)/total_pages - last_complete > 0.01:
         last_complete = float(start)/total_pages
-        print "%2f%% complete" % (last_complete*100)
+        log.warn("%2f%% complete, %s", (last_complete*100), stats)
     end = min(total_pages, start+default_page_range)
     ctids = ['"(%s,%s)"' % (pg,line) for pg in xrange(start, end) for line in xrange(max_linepointers_per_page)]
     copy_range(ctids)
 
+log.warn("Done %s. %s", tablename, stats)
+
 conn.close()
+
