@@ -122,6 +122,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
     unfixable = 0
     last_was_overwrite = False
     last_header_valid = False
+    last_was_bad = False
     shiftback_buf = None
     last_shift = None
 
@@ -136,6 +137,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         
         if is_zero_page(candidate_page):
             last_header_valid = False
+            last_was_bad = False
             if out_fd is not None:
                 if offset >= 0:
                     merged_page = prev_data[offset:] + data[:offset]
@@ -152,6 +154,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         err = validate_page(page)
         if err is None:
             last_header_valid = True
+            last_was_bad = False
             stats.add(page)
             if out_fd is not None:
                 if offset == 0:
@@ -221,6 +224,12 @@ def fix_page_corruption(input_path, validate_page, backup, output):
                     if backup_block[-overlap-offset:-offset] == prev_data[-overlap:]:
                         log.info("Backup block matched with %d overlap, picking final %d bytes from backup block" % (overlap, offset))
                         replace_data = prev_data[offset:] + backup_block[-offset:]
+        elif offset == 0 and -10 <= new_offset < 0:
+            # pd_lsn and pd_checksum can safely be replaced with NUL bytes
+            log.info("Replacing beginning of page %d with %d zero bytes", broken_index, -new_offset)
+            if not last_was_bad:
+                log.warn("Last page was not bad")
+            replace_data = "\x00"*(-new_offset) + prev_data[0:new_offset]
         elif offset == 0 and not last_header_valid and last_shift is not None and last_shift < 0 and backup:
             backup_block = read_block(backup, broken_index)
             overlap = 1024
@@ -239,6 +248,7 @@ def fix_page_corruption(input_path, validate_page, backup, output):
         if new_offset is not None and new_offset != 0:
             last_shift = new_offset
         last_was_overwrite = new_offset == 0
+        last_was_bad = new_offset is None
         
         if output:
             if out_fd is None:
