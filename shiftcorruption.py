@@ -300,6 +300,9 @@ def page_validator(lsn_min=3, lsn_max=2**48, xid_min=0, xid_max=2**32, special_m
         if page.flags > 0x7 :
             return "Invalid flags %04X" % page.flags
         
+        if page.pd_upper == 0:
+            return "pd_upper is 0"
+        
         if page.pd_lower > page.pd_upper:
             return "Negative free space between %d and %d" % (page.pd_lower, page.pd_upper)
         
