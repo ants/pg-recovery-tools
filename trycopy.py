@@ -91,7 +91,7 @@ log.warn("Processing relation %s", tablename)
 
 # given a base path, the start and end page counts, returns a string that is the file name to write to
 def compute_filename(base_path, start, end, table_name):
-    return "%s/%s.trycopy.%s-to-%s.out" % (base_path, table_name, start, end)
+    return "%s/%s.trycopy.%s-to-%s.out.gz" % (base_path, table_name, start, end)
 
 
 def copy_range(ctids):
