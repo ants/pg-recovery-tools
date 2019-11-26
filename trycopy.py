@@ -2,6 +2,7 @@ import csv
 import logging
 import sys
 import time
+import gzip
 from cStringIO import StringIO
 from optparse import OptionParser
 
@@ -150,7 +151,7 @@ for start in xrange(start_page, total_pages, default_page_range):
     log.warn("Start processing pages in batch from %i to %i", start, end)
     #the file name gets incremented with the batch count
     #TODO can/should this be gzipped?
-    fd = open(compute_filename(outfilebasepath, start, end, tablename), "w")
+    fd = gzip.open(compute_filename(outfilebasepath, start, end, tablename), "w", 9)
     ctids = ['"(%s,%s)"' % (pg, line) for pg in xrange(start, end) for line in xrange(max_linepointers_per_page)]
     copy_range(ctids)
     #is this flush and close necessary?
