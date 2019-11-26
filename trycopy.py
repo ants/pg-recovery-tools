@@ -150,7 +150,7 @@ for start in xrange(start_page, total_pages, default_page_range):
     end = min(total_pages, start + default_page_range)
     log.warn("Start processing pages in batch from %i to %i", start, end)
     #the file name gets incremented with the batch count
-    #TODO can/should this be gzipped?
+    #gzip compression should generally work well with the output from COPY
     fd = gzip.open(compute_filename(outfilebasepath, start, end, tablename), "w", 9)
     ctids = ['"(%s,%s)"' % (pg, line) for pg in xrange(start, end) for line in xrange(max_linepointers_per_page)]
     copy_range(ctids)
