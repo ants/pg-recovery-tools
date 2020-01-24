@@ -3,7 +3,10 @@ import logging
 import sys
 import time
 import gzip
-from cStringIO import StringIO
+try:
+    from StringIO import StringIO ## for Python 2
+except ImportError:
+    from io import StringIO ## for Python 3
 from optparse import OptionParser
 
 import psycopg2
@@ -47,7 +50,7 @@ if options.log:
     root.addHandler(fh)
 sh = logging.StreamHandler()
 sh.setFormatter(fmt)
-sh.setLevel(logging.WARN)
+sh.setLevel(logging.WARNING)
 root.addHandler(sh)
 root.setLevel(logging.INFO)
 
@@ -105,27 +108,27 @@ def copy_range(ctids):
         try:
             buf = StringIO()
             cur.copy_expert(query.getvalue(), buf)
-            fd.write(buf.getvalue())
+            fd.write(buf.getvalue().encode("utf-8"))
             stats.success += cur.rowcount
             return
-        except psycopg2.Error, e:
+        except psycopg2.Error as e:
             # set this to always log the exception so we know what happened
-            logging.warn("Handling exception in copy_range, this should not be fatal")
-            logging.warn(e, exc_info=True)
+            logging.warning("Handling exception in copy_range, this should not be fatal")
+            logging.warning(e, exc_info=True)
             if isinstance(e, psycopg2.InterfaceError):
-                logging.warn("Refreshing DB connection")
+                logging.warning("Refreshing DB connection")
                 new_connection()
             else:
                 try:
-                    logging.warn("Rolling back query")
+                    logging.warning("Rolling back query")
                     conn.rollback()
-                except psycopg2.Error, x:
-                    logging.warn("Refreshing DB connection after rollback attempt")
+                except psycopg2.Error as x:
+                    logging.warning("Refreshing DB connection after rollback attempt")
                     new_connection()
             if len(ctids) > 1:
                 batch_size = max(1, len(ctids) / 10)
                 log.info("Query error encountered: %s, bisecting into batches of %d" % (e, batch_size))
-                for start in xrange(0, len(ctids), batch_size):
+                for start in range(0, len(ctids), batch_size):
                     copy_range(ctids[start:start + batch_size])
                 return
             else:
@@ -143,22 +146,22 @@ def copy_range(ctids):
 stats = Stats()
 log.warn("Total pages: %d" % total_pages)
 last_complete = 0.
-for start in xrange(start_page, total_pages, default_page_range):
+for start in range(start_page, total_pages, default_page_range):
     if float(start) / total_pages - last_complete > 0.01:
         last_complete = float(start) / total_pages
-        log.warn("%2f%% complete, %s", (last_complete * 100), stats)
+        log.warning("%2f%% complete, %s", (last_complete * 100), stats)
     end = min(total_pages, start + default_page_range)
-    log.warn("Start processing pages in batch from %i to %i", start, end)
+    log.warning("Start processing pages in batch from %i to %i", start, end)
     #the file name gets incremented with the batch count
     #gzip compression should generally work well with the output from COPY
     fd = gzip.open(compute_filename(outfilebasepath, start, end, tablename), "w", 9)
-    ctids = ['"(%s,%s)"' % (pg, line) for pg in xrange(start, end) for line in xrange(max_linepointers_per_page)]
+    ctids = ['"(%s,%s)"' % (pg, line) for pg in range(start, end) for line in range(max_linepointers_per_page)]
     copy_range(ctids)
     #is this flush and close necessary?
     fd.flush()
     fd.close()
-    log.warn("Finish processing pages in batch from %i to %i", start, end)
+    log.warning("Finish processing pages in batch from %i to %i", start, end)
 
-log.warn("Done %s. %s", tablename, stats)
+log.warning("Done %s. %s", tablename, stats)
 
 conn.close()
