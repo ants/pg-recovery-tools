@@ -3,6 +3,9 @@ import logging
 import sys
 import time
 import gzip
+
+from math import floor, ceil
+
 try:
     from StringIO import StringIO ## for Python 2
 except ImportError:
@@ -126,7 +129,8 @@ def copy_range(ctids):
                     logging.warning("Refreshing DB connection after rollback attempt")
                     new_connection()
             if len(ctids) > 1:
-                batch_size = max(1, len(ctids) / 10)
+                #divide into tenths rounded up
+                batch_size = ceil(max(1, len(ctids) / 10))
                 log.info("Query error encountered: %s, bisecting into batches of %d" % (e, batch_size))
                 for start in range(0, len(ctids), batch_size):
                     copy_range(ctids[start:start + batch_size])
