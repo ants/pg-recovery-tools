@@ -1,4 +1,5 @@
-from cStringIO import StringIO
+#from cStringIO import StringIO
+from io import StringIO
 import logging
 import psycopg2
 import sys
@@ -96,18 +97,18 @@ def copy_range(ctids):
             fd.write(buf.getvalue())
             stats.success += cur.rowcount
             return
-        except psycopg2.Error, e:
+        except psycopg2.Error as e:
             if isinstance(e, psycopg2.InterfaceError):
                 new_connection()
             else:
                 try:
                     conn.rollback()
-                except psycopg2.Error, x:
+                except psycopg2.Error as x:
                     new_connection()
             if len(ctids) > 1:
-                batch_size = max(1,len(ctids)/10)
+                batch_size = max(1,len(ctids)//10)
                 log.info("Error: %s, bisecting into batches of %d" % (e, batch_size))
-                for start in xrange(0,len(ctids),batch_size):
+                for start in range(0,len(ctids),batch_size):
                     copy_range(ctids[start:start+batch_size])
                 return
             else:
@@ -124,12 +125,12 @@ def copy_range(ctids):
 stats = Stats()
 log.warn( "Total pages: %d" % total_pages)
 last_complete = 0.
-for start in xrange(0, total_pages, default_page_range):
+for start in range(0, total_pages, default_page_range):
     if float(start)/total_pages - last_complete > 0.01:
         last_complete = float(start)/total_pages
         log.warn("%2f%% complete, %s", (last_complete*100), stats)
     end = min(total_pages, start+default_page_range)
-    ctids = ['"(%s,%s)"' % (pg,line) for pg in xrange(start, end) for line in xrange(max_linepointers_per_page)]
+    ctids = ['"(%s,%s)"' % (pg,line) for pg in range(start, end) for line in range(max_linepointers_per_page)]
     copy_range(ctids)
 
 log.warn("Done %s. %s", tablename, stats)
