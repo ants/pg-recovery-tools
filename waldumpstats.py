@@ -35,6 +35,11 @@ def print_stats(lsn, topN):
     for n, s in sorted(topN, reverse=True):
         print(f"{n:8d}: {s}")
 
+def print_running(running, n=3):
+    print(f"  Top {n} running:")
+    for s in sorted(running.values(), key=lambda s: s.num_updates, reverse=True)[:3]:
+        print(f"{s}")
+
 running = collections.defaultdict(int)
 topN = [(0,None)]*N
 
@@ -81,5 +86,6 @@ for i, line in enumerate(sys.stdin):
         last_lsn = lsn
     if (i % 1000000) == 999999:
         print_stats(lsn, topN)
+        print_running(running)
 
 print_stats(last_lsn, topN)
