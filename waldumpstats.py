@@ -82,12 +82,11 @@ for i, line in enumerate(sys.stdin):
         stat.num_updates += 1
     if rmgr == 'Transaction' and cmd == 'COMMIT':
         restparts = rest.split('; ')
-        xids = [xid]
+        xids = []
         for part in restparts:
             if part.startswith('subxacts: '):
-                
                 xids.extend(part[len('subxacts: '):].split(' '))
-        stat = None
+        stat = running.pop(xid, None)
         for xid in xids:
             other = running.pop(xid)
             if stat is None:
