@@ -88,6 +88,8 @@ for i, line in enumerate(sys.stdin):
                 xids.extend(part[len('subxacts: '):].split(' '))
         stat = running.pop(xid, None)
         for xid in xids:
+            if xid not in running:
+                continue
             other = running.pop(xid)
             if stat is None:
                 stat = other
