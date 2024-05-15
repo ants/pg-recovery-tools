@@ -30,6 +30,10 @@ class Stats:
     def __lt__(self, other):
         return self.num_updates < other.num_updates and self.first_lsn < other.first_lsn
 
+    def merge(self, other):
+        self.first_lsn = min(self.first_lsn, other.first_lsn)
+        self.num_updates += other.num_updates
+
 def print_stats(lsn, topN):
     print(f"=== {lsn} ===")
     for n, s in sorted(topN, reverse=True):
@@ -77,12 +81,23 @@ for i, line in enumerate(sys.stdin):
             running[xid] = stat
         stat.num_updates += 1
     if rmgr == 'Transaction' and cmd == 'COMMIT':
-        if xid in running:
-            stat = running.pop(xid)
-            if stat.num_updates > topN[0][0]:
-                stat.commit_lsn = lsn
-                stat.commit_time = rest.split(';', 1)[0]
-                heapq.heappushpop(topN, (stat.num_updates, stat))
+        restparts = rest.split('; ')
+        xids = [xid]
+        for part in restparts:
+            if part.startswith('subxacts: '):
+                
+                xids.extend(part[len('subxacts: '):].split(' '))
+        stat = None
+        for xid in xids:
+            other = running.pop(xid)
+            if stat is None:
+                stat = other
+            else:
+                stat.merge(other)
+        if stat is not None and stat.num_updates > topN[0][0]:
+            stat.commit_lsn = lsn
+            stat.commit_time = rest.split(';', 1)[0]
+            heapq.heappushpop(topN, (stat.num_updates, stat))
         last_lsn = lsn
     if (i % 1000000) == 999999:
         print_stats(lsn, topN)
